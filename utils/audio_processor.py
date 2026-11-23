@@ -29,7 +29,7 @@ def get_youtube_transcript(url: str) -> str | None:
 
 def download_youtube_audio(url: str) -> str:
     output_template = os.path.join(DOWNLOAD_DIR, "%(id)s.%(ext)s")
-   ydl_opts = {
+    ydl_opts = {
         "format": "bestaudio*/best",
         "outtmpl": output_template,
         "force_ipv4": True,
@@ -44,6 +44,7 @@ def download_youtube_audio(url: str) -> str:
         "quiet": True,
         "noplaylist": True,
     }
+
     cookies_content = os.getenv("YOUTUBE_COOKIES")
     cookie_path = None
     if cookies_content:
