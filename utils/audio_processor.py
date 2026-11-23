@@ -1,92 +1,145 @@
 import os
-import re
 import tempfile
-import yt_dlp
-from pydub import AudioSegment
-from youtube_transcript_api import YouTubeTranscriptApi
+import streamlit as st
+from dotenv import load_dotenv
 
-DOWNLOAD_DIR = tempfile.gettempdir()
+load_dotenv()
 
+# Load Streamlit Cloud secrets into environment variables if present
+for key in ("MISTRAL_API_KEY", "GROQ_API_KEY"):
+    if key in st.secrets and not os.getenv(key):
+        os.environ[key] = st.secrets[key]
 
-def get_youtube_transcript(url: str) -> str | None:
-    """Fetch YouTube captions directly (avoids cloud IP 403 download errors)."""
-    match = re.search(r"(?:v=|youtu\.be/|shorts/)([a-zA-Z0-9_-]{11})", url)
-    if not match:
-        return None
+from utils.audio_processor import process_input
+from core.transcriber import transcribe_all
+from core.analyzer import (
+    generate_title,
+    summarize,
+    extract_all_insights,
+)
+from core.rag_engine import build_rag_chain
 
-    video_id = match.group(1)
-    try:
-        api = YouTubeTranscriptApi()
-        if hasattr(api, "fetch"):
-            fetched = api.fetch(video_id, languages=["en", "hi"])
-            return " ".join(snippet.text for snippet in fetched).strip()
-        else:
-            fetched = YouTubeTranscriptApi.get_transcript(video_id, languages=["en", "hi"])
-            return " ".join(item["text"] for item in fetched).strip()
-    except Exception:
-        return None
+st.set_page_config(page_title="AI Meeting Assistant", page_icon="🎙️", layout="wide")
+st.title("🎙️ AI Meeting Assistant")
+st.caption("Upload an audio/video file or paste a transcript for summaries, action items, decisions, and RAG Q&A.")
 
+if "result" not in st.session_state:
+    st.session_state.result = None
+if "messages" not in st.session_state:
+    st.session_state.messages = []
 
-def download_youtube_audio(url: str) -> str:
-    output_template = os.path.join(DOWNLOAD_DIR, "%(id)s.%(ext)s")
-    ydl_opts = {
-        "outtmpl": output_template,
-        "force_ipv4": True,
-        "postprocessors": [
-            {
-                "key": "FFmpegExtractAudio",
-                "preferredcodec": "mp3",
-                "preferredquality": "64",
-            }
-        ],
-        "quiet": True,
-        "noplaylist": True,
-    }
-
-    cookies_content = os.getenv("YOUTUBE_COOKIES")
-    cookie_path = None
-    if cookies_content:
-        cookie_path = os.path.join(DOWNLOAD_DIR, "yt_cookies.txt")
-        with open(cookie_path, "w", encoding="utf-8") as f:
-            f.write(cookies_content.strip())
-        ydl_opts["cookiefile"] = cookie_path
-
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
-            return os.path.join(DOWNLOAD_DIR, f"{info['id']}.mp3")
-    finally:
-        if cookie_path and os.path.exists(cookie_path):
-            os.remove(cookie_path)
-
-
-def convert_to_mp3(input_path: str) -> str:
-    output_path = os.path.join(
-        DOWNLOAD_DIR, f"{os.path.splitext(os.path.basename(input_path))[0]}_conv.mp3"
+col1, col2 = st.columns([2, 1])
+with col1:
+    uploaded_file = st.file_uploader(
+        "Upload Audio / Video",
+        type=["mp3", "wav", "m4a", "mp4", "webm", "ogg"],
     )
-    audio = AudioSegment.from_file(input_path)
-    audio = audio.set_channels(1).set_frame_rate(16000)
-    audio.export(output_path, format="mp3", bitrate="64k")
-    return output_path
+with col2:
+    language = st.radio("Audio Language (for Groq Whisper)", ["english", "hinglish"])
 
+pasted_transcript = st.text_area(
+    "Or Paste Transcript Directly (Optional)",
+    height=140,
+    placeholder="Paste meeting notes or a video transcript here if you aren't uploading an audio/video file...",
+)
 
-def chunk_audio(mp3_path: str, chunk_minutes: int = 10) -> list:
-    audio = AudioSegment.from_file(mp3_path)
-    chunk_ms = chunk_minutes * 60 * 1000
-    chunks = []
+if st.button("Analyze Meeting", type="primary", use_container_width=True):
+    temp_path = None
 
-    for i, start in enumerate(range(0, len(audio), chunk_ms)):
-        chunk = audio[start : start + chunk_ms]
-        chunk_path = f"{mp3_path}_chunk_{i}.mp3"
-        chunk.export(chunk_path, format="mp3", bitrate="64k")
-        chunks.append(chunk_path)
-
-    return chunks
-
-
-def process_input(source: str) -> list:
-    if source.startswith("http://") or source.startswith("https://"):
-        audio_path = download_youtube_audio(source)
+    if uploaded_file is None and not pasted_transcript.strip():
+        st.error("Please upload an audio/video file or paste a transcript.")
     else:
-        audio_path = convert_to_mp3(source)
-    return chunk_audio(audio_path)
+        try:
+            with st.status("Analyzing meeting...", expanded=True) as status:
+                transcript = ""
+
+                if pasted_transcript.strip():
+                    st.write("1/4 Using pasted transcript...")
+                    transcript = pasted_transcript.strip()
+                else:
+                    suffix = os.path.splitext(uploaded_file.name)[1] or ".mp3"
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+                        tmp.write(uploaded_file.read())
+                        temp_path = tmp.name
+
+                    st.write("1/4 Processing audio...")
+                    chunks = process_input(temp_path)
+
+                    st.write("2/4 Transcribing with Groq Whisper...")
+                    transcript = transcribe_all(chunks, language=language)
+
+                if not transcript:
+                    raise RuntimeError("Could not extract any speech or text to analyze.")
+
+                st.write("3/4 Generating title, summary, action items, decisions & questions...")
+                title = generate_title(transcript)
+                summary = summarize(transcript)
+                insights = extract_all_insights(transcript)
+                actions = insights["actions"]
+                decisions = insights["decisions"]
+                questions = insights["questions"]
+
+                st.write("4/4 Building RAG search index...")
+                rag_chain = build_rag_chain(transcript)
+
+                status.update(label="Analysis complete!", state="complete", expanded=False)
+
+            st.session_state.result = {
+                "title": title,
+                "summary": summary,
+                "actions": actions,
+                "decisions": decisions,
+                "questions": questions,
+                "transcript": transcript,
+                "rag_chain": rag_chain,
+            }
+            st.session_state.messages = []
+        except Exception as e:
+            if "429" in str(e):
+                st.error(
+                    "Mistral API rate limit (HTTP 429) hit. Wait about 60 seconds and click 'Analyze Meeting' again."
+                )
+            else:
+                st.error(f"Error: {e}")
+        finally:
+            if temp_path and os.path.exists(temp_path):
+                os.remove(temp_path)
+
+if st.session_state.result:
+    res = st.session_state.result
+    st.subheader(f"📌 {res['title']}")
+
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+        "📋 Summary",
+        "✅ Action Items",
+        "🔑 Key Decisions",
+        "❓ Open Questions",
+        "📝 Full Transcript",
+        "💬 Chat with Meeting",
+    ])
+
+    with tab1:
+        st.markdown(res["summary"])
+    with tab2:
+        st.markdown(res["actions"])
+    with tab3:
+        st.markdown(res["decisions"])
+    with tab4:
+        st.markdown(res["questions"])
+    with tab5:
+        st.text_area("Transcript", res["transcript"], height=350)
+    with tab6:
+        for msg in st.session_state.messages:
+            with st.chat_message(msg["role"]):
+                st.markdown(msg["content"])
+
+        if prompt := st.chat_input("Ask anything about the meeting..."):
+            st.session_state.messages.append({"role": "user", "content": prompt})
+            with st.chat_message("user"):
+                st.markdown(prompt)
+
+            with st.chat_message("assistant"):
+                with st.spinner("Searching transcript..."):
+                    answer = res["rag_chain"].invoke(prompt)
+                st.markdown(answer)
+            st.session_state.messages.append({"role": "assistant", "content": answer})
