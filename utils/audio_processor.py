@@ -29,11 +29,11 @@ def get_youtube_transcript(url: str) -> str | None:
 
 def download_youtube_audio(url: str) -> str:
     output_template = os.path.join(DOWNLOAD_DIR, "%(id)s.%(ext)s")
-    ydl_opts = {
-        "format": "bestaudio*/best",
+   ydl_opts = {
+        "format": "bestaudio/best/bestvideo+bestaudio",
         "outtmpl": output_template,
         "force_ipv4": True,
-        "extractor_args": {"youtube": {"player_client": ["web_safari", "web_embedded", "-tv_downgraded"]}},
+        "extractor_args": {"youtube": {"player_client": ["web"]}},
         "postprocessors": [
             {
                 "key": "FFmpegExtractAudio",
