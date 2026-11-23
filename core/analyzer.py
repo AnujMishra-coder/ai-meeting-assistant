@@ -4,7 +4,7 @@ import requests
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 GROQ_CHAT_URL = "https://api.groq.com/openai/v1/chat/completions"
-GROQ_MODEL = "llama-3.3-70b-versatile"
+GROQ_MODEL = "openai/gpt-oss-20b"
 
 
 def _call_groq(system_prompt: str, user_text: str, temperature: float = 0.2) -> str:
