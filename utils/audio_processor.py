@@ -33,7 +33,7 @@ def download_youtube_audio(url: str) -> str:
         "format": "bestaudio*/best",
         "outtmpl": output_template,
         "force_ipv4": True,
-        "extractor_args": {"youtube": {"player_client": ["tv", "web"]}},
+        "extractor_args": {"youtube": {"player_client": ["web_safari", "web_embedded", "-tv_downgraded"]}},
         "postprocessors": [
             {
                 "key": "FFmpegExtractAudio",
