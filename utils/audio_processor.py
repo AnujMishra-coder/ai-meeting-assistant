@@ -1,9 +1,30 @@
 import os
+import re
 import tempfile
 import yt_dlp
 from pydub import AudioSegment
+from youtube_transcript_api import YouTubeTranscriptApi
 
 DOWNLOAD_DIR = tempfile.gettempdir()
+
+
+def get_youtube_transcript(url: str) -> str | None:
+    """Fetch YouTube captions directly (avoids cloud IP 403 download errors)."""
+    match = re.search(r"(?:v=|youtu\.be/|shorts/)([a-zA-Z0-9_-]{11})", url)
+    if not match:
+        return None
+
+    video_id = match.group(1)
+    try:
+        api = YouTubeTranscriptApi()
+        if hasattr(api, "fetch"):
+            fetched = api.fetch(video_id, languages=["en", "hi"])
+            return " ".join(snippet.text for snippet in fetched).strip()
+        else:
+            fetched = YouTubeTranscriptApi.get_transcript(video_id, languages=["en", "hi"])
+            return " ".join(item["text"] for item in fetched).strip()
+    except Exception:
+        return None
 
 
 def download_youtube_audio(url: str) -> str:
@@ -11,6 +32,8 @@ def download_youtube_audio(url: str) -> str:
     ydl_opts = {
         "format": "bestaudio/best",
         "outtmpl": output_template,
+        "force_ipv4": True,
+        "extractor_args": {"youtube": {"player_client": ["web_embedded", "web"]}},
         "postprocessors": [
             {
                 "key": "FFmpegExtractAudio",
