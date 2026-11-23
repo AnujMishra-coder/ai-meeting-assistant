@@ -10,7 +10,7 @@ for key in ("MISTRAL_API_KEY", "GROQ_API_KEY"):
     if key in st.secrets and not os.getenv(key):
         os.environ[key] = st.secrets[key]
 
-from utils.audio_processor import process_input
+from utils.audio_processor import process_input, get_youtube_transcript
 from core.transcriber import transcribe_all
 from core.analyzer import (
     generate_title,
@@ -59,11 +59,21 @@ if st.button("Analyze Meeting", type="primary", use_container_width=True):
     else:
         try:
             with st.status("Analyzing meeting...", expanded=True) as status:
-                st.write("1/5 Processing audio...")
-                chunks = process_input(source)
+                transcript = None
 
-                st.write("2/5 Transcribing with Groq Whisper...")
-                transcript = transcribe_all(chunks, language=language)
+                if source.startswith(("http://", "https://")):
+                    st.write("1/5 Fetching YouTube captions...")
+                    transcript = get_youtube_transcript(source)
+
+                if not transcript:
+                    st.write("1/5 Processing audio...")
+                    chunks = process_input(source)
+
+                    st.write("2/5 Transcribing with Groq Whisper...")
+                    transcript = transcribe_all(chunks, language=language)
+                else:
+                    st.write("2/5 Captions fetched directly (skipped audio download).")
+
                 if not transcript:
                     raise RuntimeError("Could not extract any speech from the audio.")
 
@@ -92,7 +102,13 @@ if st.button("Analyze Meeting", type="primary", use_container_width=True):
             }
             st.session_state.messages = []
         except Exception as e:
-            st.error(f"Error: {e}")
+            if "403" in str(e):
+                st.error(
+                    "YouTube blocked the cloud server from downloading this video (HTTP 403). "
+                    "Please download the audio locally and use the 'Upload Audio / Video' box instead."
+                )
+            else:
+                st.error(f"Error: {e}")
         finally:
             if temp_path and os.path.exists(temp_path):
                 os.remove(temp_path)
