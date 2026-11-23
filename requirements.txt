@@ -1,9 +1,8 @@
 streamlit>=1.40.0
 langchain-core
-langchain-mistralai
 langchain-text-splitters
 pydub
 audioop-lts; python_version >= "3.13"
-youtube-transcript-api
 requests
 python-dotenv
+scikit-learn
