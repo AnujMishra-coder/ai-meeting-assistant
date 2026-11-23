@@ -1,41 +1,46 @@
 import os
 import time
-from langchain_mistralai import ChatMistralAI
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.output_parsers import StrOutputParser
+import requests
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-
-def get_llm(temperature: float = 0.2):
-    return ChatMistralAI(
-        model="mistral-small-latest",
-        mistral_api_key=os.getenv("MISTRAL_API_KEY"),
-        temperature=temperature,
-        max_retries=0,
-    )
+GROQ_CHAT_URL = "https://api.groq.com/openai/v1/chat/completions"
+GROQ_MODEL = "llama-3.3-70b-versatile"
 
 
-def _run_prompt(system_prompt: str, text: str, temperature: float = 0.2) -> str:
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", system_prompt),
-        ("human", "{text}"),
-    ])
-    chain = prompt | get_llm(temperature) | StrOutputParser()
+def _call_groq(system_prompt: str, user_text: str, temperature: float = 0.2) -> str:
+    api_key = os.getenv("GROQ_API_KEY")
+    if not api_key:
+        raise RuntimeError("GROQ_API_KEY is not set.")
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": GROQ_MODEL,
+        "temperature": temperature,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_text},
+        ],
+    }
 
     for attempt in range(4):
-        try:
-            time.sleep(2)
-            return chain.invoke({"text": text})
-        except Exception as e:
-            if "429" in str(e) and attempt < 3:
-                time.sleep(5 * (attempt + 1))
-                continue
-            raise
+        time.sleep(1)
+        resp = requests.post(GROQ_CHAT_URL, headers=headers, json=payload, timeout=120)
+        if resp.status_code == 429 and attempt < 3:
+            time.sleep(5 * (attempt + 1))
+            continue
+        if not resp.ok:
+            raise RuntimeError(f"Groq Chat API error {resp.status_code}: {resp.text}")
+        return resp.json()["choices"][0]["message"]["content"].strip()
+
+    raise RuntimeError("Groq Chat API rate limit exceeded.")
 
 
 def generate_overview(transcript: str) -> tuple[str, str]:
     if len(transcript) <= 25000:
-        raw = _run_prompt(
+        raw = _call_groq(
             "You are an expert meeting summarizer. Return two exact sections separated by '===SUMMARY===':\n\n"
             "1. First section: A short professional meeting title (max 8 words). Only the title.\n\n"
             "===SUMMARY===\n"
@@ -47,15 +52,15 @@ def generate_overview(transcript: str) -> tuple[str, str]:
         splitter = RecursiveCharacterTextSplitter(chunk_size=12000, chunk_overlap=300)
         chunks = splitter.split_text(transcript)
         partials = [
-            _run_prompt("Summarize this portion of a meeting transcript concisely.", c, 0.3)
+            _call_groq("Summarize this portion of a meeting transcript concisely.", c, 0.3)
             for c in chunks
         ]
-        combined_summary = _run_prompt(
+        combined_summary = _call_groq(
             "Combine these partial summaries into one final professional meeting summary in bullet points.",
             "\n\n".join(partials),
             temperature=0.3,
         )
-        title = _run_prompt(
+        title = _call_groq(
             "Based on the meeting summary, generate a short professional meeting title "
             "(max 8 words). Only return the title, nothing else.",
             combined_summary[:2500],
@@ -74,7 +79,7 @@ def generate_overview(transcript: str) -> tuple[str, str]:
 
 
 def extract_all_insights(transcript: str) -> dict[str, str]:
-    raw = _run_prompt(
+    raw = _call_groq(
         "You are an expert meeting analyst. Analyze the transcript and return three exact sections "
         "separated by '===DECISIONS===' and '===QUESTIONS===':\n\n"
         "1. First section: All action items. For each provide:\n"
