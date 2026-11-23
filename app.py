@@ -15,9 +15,7 @@ from core.transcriber import transcribe_all
 from core.analyzer import (
     generate_title,
     summarize,
-    extract_action_items,
-    extract_key_decisions,
-    extract_questions,
+    extract_all_insights,
 )
 from core.rag_engine import build_rag_chain
 
@@ -82,9 +80,10 @@ if st.button("Analyze Meeting", type="primary", use_container_width=True):
                 summary = summarize(transcript)
 
                 st.write("4/5 Extracting action items, decisions & questions...")
-                actions = extract_action_items(transcript)
-                decisions = extract_key_decisions(transcript)
-                questions = extract_questions(transcript)
+                insights = extract_all_insights(transcript)
+                actions = insights["actions"]
+                decisions = insights["decisions"]
+                questions = insights["questions"]
 
                 st.write("5/5 Building RAG search index...")
                 rag_chain = build_rag_chain(transcript)
@@ -106,6 +105,10 @@ if st.button("Analyze Meeting", type="primary", use_container_width=True):
                 st.error(
                     "YouTube blocked the cloud server from downloading this video (HTTP 403). "
                     "Please download the audio locally and use the 'Upload Audio / Video' box instead."
+                )
+            elif "429" in str(e):
+                st.error(
+                    "Mistral API rate limit (HTTP 429) hit. Wait about 60 seconds and click 'Analyze Meeting' again."
                 )
             else:
                 st.error(f"Error: {e}")
