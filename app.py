@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Load Streamlit Cloud secrets into environment variables if present
-for key in ("MISTRAL_API_KEY", "GROQ_API_KEY"):
+for key in ("MISTRAL_API_KEY", "GROQ_API_KEY", "YOUTUBE_COOKIES"):
     if key in st.secrets and not os.getenv(key):
         os.environ[key] = st.secrets[key]
 
