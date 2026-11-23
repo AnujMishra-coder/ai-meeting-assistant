@@ -33,7 +33,6 @@ def download_youtube_audio(url: str) -> str:
         "format": "bestaudio/best",
         "outtmpl": output_template,
         "force_ipv4": True,
-        "extractor_args": {"youtube": {"player_client": ["web_embedded", "web"]}},
         "postprocessors": [
             {
                 "key": "FFmpegExtractAudio",
@@ -44,9 +43,22 @@ def download_youtube_audio(url: str) -> str:
         "quiet": True,
         "noplaylist": True,
     }
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(url, download=True)
-        return os.path.join(DOWNLOAD_DIR, f"{info['id']}.mp3")
+
+    cookies_content = os.getenv("YOUTUBE_COOKIES")
+    cookie_path = None
+    if cookies_content:
+        cookie_path = os.path.join(DOWNLOAD_DIR, "yt_cookies.txt")
+        with open(cookie_path, "w", encoding="utf-8") as f:
+            f.write(cookies_content.strip())
+        ydl_opts["cookiefile"] = cookie_path
+
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            return os.path.join(DOWNLOAD_DIR, f"{info['id']}.mp3")
+    finally:
+        if cookie_path and os.path.exists(cookie_path):
+            os.remove(cookie_path)
 
 
 def convert_to_mp3(input_path: str) -> str:
