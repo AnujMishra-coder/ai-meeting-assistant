@@ -1,61 +1,35 @@
-import os
-from langchain_mistralai import ChatMistralAI, MistralAIEmbeddings
-from langchain_core.vectorstores import InMemoryVectorStore
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.output_parsers import StrOutputParser
-from langchain_core.runnables import RunnablePassthrough, RunnableLambda
-from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
+from core.analyzer import _call_groq
 
 
-def _format_docs(docs):
-    return "\n\n".join([doc.page_content for doc in docs])
+class MeetingRAGAssistant:
+    def __init__(self, transcript: str):
+        splitter = RecursiveCharacterTextSplitter(chunk_size=600, chunk_overlap=80)
+        self.chunks = splitter.split_text(transcript) or [transcript]
+        self.vectorizer = TfidfVectorizer(stop_words="english")
+        self.matrix = self.vectorizer.fit_transform(self.chunks)
+
+    def invoke(self, question: str) -> str:
+        q_vec = self.vectorizer.transform([question])
+        scores = cosine_similarity(q_vec, self.matrix).flatten()
+        top_indices = scores.argsort()[::-1][:4]
+        context = (
+            "\n\n".join(self.chunks[i] for i in top_indices if scores[i] > 0)
+            or "\n\n".join(self.chunks[:4])
+        )
+
+        system_prompt = (
+            "You are an expert meeting assistant. Answer the user's question "
+            "based ONLY on the meeting transcript context provided below.\n\n"
+            "If the answer is not found in the context, say:\n"
+            '"I could not find this information in the meeting transcript."\n\n'
+            "Always be concise and precise. If quoting someone, mention it clearly.\n\n"
+            f"Context from meeting transcript:\n{context}"
+        )
+        return _call_groq(system_prompt, question, temperature=0.3)
 
 
-def build_rag_chain(transcript: str):
-    splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
-    chunks = splitter.split_text(transcript)
-    docs = [
-        Document(page_content=chunk, metadata={"chunk_index": i})
-        for i, chunk in enumerate(chunks)
-    ]
-
-    embeddings = MistralAIEmbeddings(
-        model="mistral-embed",
-        mistral_api_key=os.getenv("MISTRAL_API_KEY"),
-    )
-    vector_store = InMemoryVectorStore.from_documents(docs, embeddings)
-    retriever = vector_store.as_retriever(search_kwargs={"k": 4})
-
-    llm = ChatMistralAI(
-        model="mistral-small-latest",
-        mistral_api_key=os.getenv("MISTRAL_API_KEY"),
-        temperature=0.3,
-    )
-
-    prompt = ChatPromptTemplate.from_messages([
-        (
-            "system",
-            """You are an expert meeting assistant. Answer the user's question
-based ONLY on the meeting transcript context provided below.
-
-If the answer is not found in the context, say:
-"I could not find this information in the meeting transcript."
-
-Always be concise and precise. If quoting someone, mention it clearly.
-
-Context from meeting transcript:
-{context}""",
-        ),
-        ("human", "{question}"),
-    ])
-
-    return (
-        {
-            "context": retriever | RunnableLambda(_format_docs),
-            "question": RunnablePassthrough(),
-        }
-        | prompt
-        | llm
-        | StrOutputParser()
-    )
+def build_rag_chain(transcript: str) -> MeetingRAGAssistant:
+    return MeetingRAGAssistant(transcript)
