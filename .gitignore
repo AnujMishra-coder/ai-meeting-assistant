@@ -1,0 +1,11 @@
+.env
+.streamlit/secrets.toml
+venv/
+__pycache__/
+*.pyc
+
+git init
+git remote add space https://huggingface.co/spaces/YOUR_USERNAME/ai-meeting-assistant
+git add .
+git commit -m "Initial deployment"
+git push -u space main

@@ -1,0 +1,9 @@
+streamlit>=1.40.0
+langchain-core
+langchain-mistralai
+langchain-text-splitters
+pydub
+audioop-lts; python_version >= "3.13"
+yt-dlp
+requests
+python-dotenv
