@@ -12,8 +12,7 @@ for key in ("MISTRAL_API_KEY", "GROQ_API_KEY"):
 from utils.audio_processor import process_input
 from core.transcriber import transcribe_all
 from core.analyzer import (
-    generate_title,
-    summarize,
+    generate_overview,
     extract_all_insights,
 )
 from core.rag_engine import build_rag_chain
@@ -71,8 +70,7 @@ if st.button("Analyze Meeting", type="primary", use_container_width=True):
                     raise RuntimeError("Could not extract any speech or text to analyze.")
 
                 st.write("3/4 Generating title, summary, action items, decisions & questions...")
-                title = generate_title(transcript)
-                summary = summarize(transcript)
+                title, summary = generate_overview(transcript)
                 insights = extract_all_insights(transcript)
                 actions = insights["actions"]
                 decisions = insights["decisions"]
