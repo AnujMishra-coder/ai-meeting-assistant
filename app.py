@@ -5,12 +5,11 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# Load Streamlit Cloud secrets into environment variables if present
-for key in ("MISTRAL_API_KEY", "GROQ_API_KEY", "YOUTUBE_COOKIES"):
+for key in ("MISTRAL_API_KEY", "GROQ_API_KEY"):
     if key in st.secrets and not os.getenv(key):
         os.environ[key] = st.secrets[key]
 
-from utils.audio_processor import process_input, get_youtube_transcript
+from utils.audio_processor import process_input
 from core.transcriber import transcribe_all
 from core.analyzer import (
     generate_title,
@@ -21,71 +20,65 @@ from core.rag_engine import build_rag_chain
 
 st.set_page_config(page_title="AI Meeting Assistant", page_icon="🎙️", layout="wide")
 st.title("🎙️ AI Meeting Assistant")
-st.caption("Upload an audio/video file or paste a YouTube URL for summaries, action items, decisions, and RAG Q&A.")
+st.caption("Upload an audio/video file or paste a transcript for summaries, action items, decisions, and RAG Q&A.")
 
 if "result" not in st.session_state:
     st.session_state.result = None
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-col1, col2, col3 = st.columns([2, 2, 1])
+col1, col2 = st.columns([2, 1])
 with col1:
     uploaded_file = st.file_uploader(
         "Upload Audio / Video",
         type=["mp3", "wav", "m4a", "mp4", "webm", "ogg"],
     )
 with col2:
-    youtube_url = st.text_input("Or Paste YouTube URL", placeholder="https://www.youtube.com/watch?v=...")
-with col3:
-    language = st.radio("Language", ["english", "hinglish"])
+    language = st.radio("Audio Language (for Groq Whisper)", ["english", "hinglish"])
+
+pasted_transcript = st.text_area(
+    "Or Paste Transcript Directly (Optional)",
+    height=140,
+    placeholder="Paste meeting notes or a video transcript here...",
+)
 
 if st.button("Analyze Meeting", type="primary", use_container_width=True):
-    source = None
     temp_path = None
 
-    if uploaded_file is not None:
-        suffix = os.path.splitext(uploaded_file.name)[1] or ".mp3"
-        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-            tmp.write(uploaded_file.read())
-            temp_path = tmp.name
-        source = temp_path
-    elif youtube_url.strip():
-        source = youtube_url.strip()
-
-    if not source:
-        st.error("Please upload an audio/video file or paste a YouTube URL.")
+    if uploaded_file is None and not pasted_transcript.strip():
+        st.error("Please upload an audio/video file or paste a transcript.")
     else:
         try:
             with st.status("Analyzing meeting...", expanded=True) as status:
-                transcript = None
+                transcript = ""
 
-                if source.startswith(("http://", "https://")):
-                    st.write("1/5 Fetching YouTube captions...")
-                    transcript = get_youtube_transcript(source)
-
-                if not transcript:
-                    st.write("1/5 Processing audio...")
-                    chunks = process_input(source)
-
-                    st.write("2/5 Transcribing with Groq Whisper...")
-                    transcript = transcribe_all(chunks, language=language)
+                if pasted_transcript.strip():
+                    st.write("1/4 Using pasted transcript...")
+                    transcript = pasted_transcript.strip()
                 else:
-                    st.write("2/5 Captions fetched directly (skipped audio download).")
+                    suffix = os.path.splitext(uploaded_file.name)[1] or ".mp3"
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+                        tmp.write(uploaded_file.read())
+                        temp_path = tmp.name
+
+                    st.write("1/4 Processing audio...")
+                    chunks = process_input(temp_path)
+
+                    st.write("2/4 Transcribing with Groq Whisper...")
+                    transcript = transcribe_all(chunks, language=language)
 
                 if not transcript:
-                    raise RuntimeError("Could not extract any speech from the audio.")
+                    raise RuntimeError("Could not extract any speech or text to analyze.")
 
-                st.write("3/5 Generating title & summary...")
+                st.write("3/4 Generating title, summary, action items, decisions & questions...")
                 title = generate_title(transcript)
                 summary = summarize(transcript)
-
-                st.write("4/5 Extracting action items, decisions & questions...")
                 insights = extract_all_insights(transcript)
                 actions = insights["actions"]
                 decisions = insights["decisions"]
                 questions = insights["questions"]
 
-                st.write("5/5 Building RAG search index...")
+                st.write("4/4 Building RAG search index...")
                 rag_chain = build_rag_chain(transcript)
 
                 status.update(label="Analysis complete!", state="complete", expanded=False)
@@ -101,12 +94,7 @@ if st.button("Analyze Meeting", type="primary", use_container_width=True):
             }
             st.session_state.messages = []
         except Exception as e:
-            if "403" in str(e):
-                st.error(
-                    "YouTube blocked the cloud server from downloading this video (HTTP 403). "
-                    "Please download the audio locally and use the 'Upload Audio / Video' box instead."
-                )
-            elif "429" in str(e):
+            if "429" in str(e):
                 st.error(
                     "Mistral API rate limit (HTTP 429) hit. Wait about 60 seconds and click 'Analyze Meeting' again."
                 )
