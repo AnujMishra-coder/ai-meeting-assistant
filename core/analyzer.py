@@ -33,35 +33,44 @@ def _run_prompt(system_prompt: str, text: str, temperature: float = 0.2) -> str:
             raise
 
 
-def generate_title(transcript: str) -> str:
-    return _run_prompt(
-        "Based on the meeting transcript, generate a short professional meeting title "
-        "(max 8 words). Only return the title, nothing else.",
-        transcript[:2500],
-        temperature=0.3,
-    )
-
-
-def summarize(transcript: str) -> str:
+def generate_overview(transcript: str) -> tuple[str, str]:
     if len(transcript) <= 25000:
-        return _run_prompt(
-            "You are an expert meeting summarizer. Write a clear, professional "
-            "meeting summary in concise bullet points.",
+        raw = _run_prompt(
+            "You are an expert meeting summarizer. Return two exact sections separated by '===SUMMARY===':\n\n"
+            "1. First section: A short professional meeting title (max 8 words). Only the title.\n\n"
+            "===SUMMARY===\n"
+            "2. Second section: A clear, professional meeting summary in concise bullet points.",
             transcript,
             temperature=0.3,
         )
+    else:
+        splitter = RecursiveCharacterTextSplitter(chunk_size=12000, chunk_overlap=300)
+        chunks = splitter.split_text(transcript)
+        partials = [
+            _run_prompt("Summarize this portion of a meeting transcript concisely.", c, 0.3)
+            for c in chunks
+        ]
+        combined_summary = _run_prompt(
+            "Combine these partial summaries into one final professional meeting summary in bullet points.",
+            "\n\n".join(partials),
+            temperature=0.3,
+        )
+        title = _run_prompt(
+            "Based on the meeting summary, generate a short professional meeting title "
+            "(max 8 words). Only return the title, nothing else.",
+            combined_summary[:2500],
+            temperature=0.3,
+        )
+        return title.strip().strip("#*\" ") or "Meeting Summary", combined_summary.strip()
 
-    splitter = RecursiveCharacterTextSplitter(chunk_size=12000, chunk_overlap=300)
-    chunks = splitter.split_text(transcript)
-    partials = [
-        _run_prompt("Summarize this portion of a meeting transcript concisely.", c, 0.3)
-        for c in chunks
-    ]
-    return _run_prompt(
-        "Combine these partial summaries into one final professional meeting summary in bullet points.",
-        "\n\n".join(partials),
-        temperature=0.3,
-    )
+    if "===SUMMARY===" in raw:
+        title_part, summary_part = raw.split("===SUMMARY===", 1)
+        return (
+            title_part.strip().strip("#*\" ") or "Meeting Summary",
+            summary_part.strip() or "No summary generated.",
+        )
+
+    return "Meeting Summary", raw.strip()
 
 
 def extract_all_insights(transcript: str) -> dict[str, str]:
